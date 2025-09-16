@@ -1,0 +1,107 @@
+[
+  {
+    "application_id": "APP_20240916_001",
+    "applicant_info": {
+      "name": "John Smith",
+      "age": 35,
+      "income": 75000,
+      "employment_status": "employed",
+      "employment_duration_months": 36,
+      "address": "123 Main St, Anytown, ST 12345",
+      "phone": "+1-555-123-4567",
+      "email": "john.smith@email.com"
+    },
+    "credit_score": 720,
+    "loan_amount": 25000,
+    "loan_purpose": "home_improvement",
+    "requested_term_months": 60,
+    "down_payment": 5000,
+    "existing_debt": 15000,
+    "assets": 50000,
+    "submitted_at": "2024-09-16T10:00:00Z"
+  },
+  {
+    "application_id": "APP_20240916_002",
+    "applicant_info": {
+      "name": "Sarah Johnson",
+      "age": 28,
+      "income": 45000,
+      "employment_status": "employed",
+      "employment_duration_months": 18,
+      "address": "456 Oak Ave, Springfield, ST 67890",
+      "phone": "+1-555-987-6543",
+      "email": "sarah.johnson@email.com"
+    },
+    "credit_score": 680,
+    "loan_amount": 15000,
+    "loan_purpose": "debt_consolidation",
+    "requested_term_months": 48,
+    "down_payment": 0,
+    "existing_debt": 25000,
+    "assets": 10000,
+    "submitted_at": "2024-09-16T11:00:00Z"
+  },
+  {
+    "application_id": "APP_20240916_003",
+    "applicant_info": {
+      "name": "Michael Brown",
+      "age": 42,
+      "income": 95000,
+      "employment_status": "self_employed",
+      "employment_duration_months": 60,
+      "address": "789 Pine St, Riverside, ST 54321",
+      "phone": "+1-555-456-7890",
+      "email": "michael.brown@email.com"
+    },
+    "credit_score": 750,
+    "loan_amount": 40000,
+    "loan_purpose": "business",
+    "requested_term_months": 72,
+    "down_payment": 10000,
+    "existing_debt": 8000,
+    "assets": 120000,
+    "submitted_at": "2024-09-16T12:00:00Z"
+  },
+  {
+    "application_id": "APP_20240916_004",
+    "applicant_info": {
+      "name": "Emily Davis",
+      "age": 26,
+      "income": 38000,
+      "employment_status": "employed",
+      "employment_duration_months": 8,
+      "address": "321 Elm St, Lakeside, ST 98765",
+      "phone": "+1-555-234-5678",
+      "email": "emily.davis@email.com"
+    },
+    "credit_score": 620,
+    "loan_amount": 12000,
+    "loan_purpose": "auto_loan",
+    "requested_term_months": 36,
+    "down_payment": 2000,
+    "existing_debt": 18000,
+    "assets": 5000,
+    "submitted_at": "2024-09-16T13:00:00Z"
+  },
+  {
+    "application_id": "APP_20240916_005",
+    "applicant_info": {
+      "name": "Robert Wilson",
+      "age": 55,
+      "income": 85000,
+      "employment_status": "employed",
+      "employment_duration_months": 120,
+      "address": "654 Maple Dr, Hilltown, ST 13579",
+      "phone": "+1-555-345-6789",
+      "email": "robert.wilson@email.com"
+    },
+    "credit_score": 780,
+    "loan_amount": 30000,
+    "loan_purpose": "home_purchase",
+    "requested_term_months": 84,
+    "down_payment": 15000,
+    "existing_debt": 5000,
+    "assets": 200000,
+    "submitted_at": "2024-09-16T14:00:00Z"
+  }
+]
