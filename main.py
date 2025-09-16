@@ -10,7 +10,18 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends
+
+# Check for python-multipart availability
+try:
+    import multipart
+    from fastapi import UploadFile, File, Form
+    MULTIPART_AVAILABLE = True
+except ImportError:
+    UploadFile = None
+    File = None
+    Form = None
+    MULTIPART_AVAILABLE = False
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -157,11 +168,9 @@ async def assess_credit_application(
         )
 
 
-@app.post("/api/v1/upload-bank-statement")
-async def upload_bank_statement(
-    file: UploadFile = File(...),
-    applicant_id: str = Form(...),
-    credit_agent: CreditAssessmentAgent = Depends(get_credit_agent)
+# Define upload function separately to avoid import-time evaluation
+async def upload_bank_statement_impl(
+    file, applicant_id: str, credit_agent: CreditAssessmentAgent
 ):
     """
     Upload and process a bank statement PDF.
@@ -259,6 +268,24 @@ async def global_exception_handler(request, exc):
             "detail": "An unexpected error occurred"
         }
     )
+
+
+# Conditionally add file upload endpoint if multipart is available
+if MULTIPART_AVAILABLE:
+    @app.post("/api/v1/upload-bank-statement")
+    async def upload_bank_statement(
+        file: UploadFile = File(...),
+        applicant_id: str = Form(...),
+        credit_agent: CreditAssessmentAgent = Depends(get_credit_agent)
+    ):
+        return await upload_bank_statement_impl(file, applicant_id, credit_agent)
+else:
+    @app.post("/api/v1/upload-bank-statement")
+    async def upload_bank_statement_unavailable():
+        raise HTTPException(
+            status_code=501,
+            detail="File upload functionality requires python-multipart. Install with: pip install python-multipart"
+        )
 
 
 if __name__ == "__main__":

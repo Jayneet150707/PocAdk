@@ -12,8 +12,14 @@ from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 
-import PyPDF2
-from PyPDF2 import PdfReader
+try:
+    import PyPDF2
+    from PyPDF2 import PdfReader
+    PYPDF2_AVAILABLE = True
+except ImportError:
+    PyPDF2 = None
+    PdfReader = None
+    PYPDF2_AVAILABLE = False
 
 from .data_models import BankTransaction, TransactionType, TransactionSummary
 
@@ -72,6 +78,9 @@ class PDFProcessor:
             ValueError: If PDF is invalid or too large
             Exception: If processing fails
         """
+        if not PYPDF2_AVAILABLE:
+            raise ImportError("PyPDF2 is required for PDF processing. Install with: pip install PyPDF2")
+        
         try:
             # Validate file size
             file_size_mb = pdf_path.stat().st_size / (1024 * 1024)
@@ -96,6 +105,9 @@ class PDFProcessor:
     
     async def _extract_text_from_pdf(self, pdf_path: Path) -> str:
         """Extract text content from PDF file."""
+        if not PYPDF2_AVAILABLE:
+            raise ImportError("PyPDF2 is required for PDF processing. Install with: pip install PyPDF2")
+        
         try:
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PdfReader(file)

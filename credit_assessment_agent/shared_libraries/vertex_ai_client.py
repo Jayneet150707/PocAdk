@@ -12,9 +12,16 @@ from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 import os
 
-from google.cloud import aiplatform
-from google.auth import default
-from google.auth.exceptions import DefaultCredentialsError
+try:
+    from google.cloud import aiplatform
+    from google.auth import default
+    from google.auth.exceptions import DefaultCredentialsError
+    GOOGLE_CLOUD_AVAILABLE = True
+except ImportError:
+    aiplatform = None
+    default = None
+    DefaultCredentialsError = Exception
+    GOOGLE_CLOUD_AVAILABLE = False
 
 from .data_models import (
     CreditApplication, 
@@ -46,17 +53,29 @@ class VertexAIClient:
             location: Vertex AI location
             model_name: Model name to use for predictions
         """
+        if not GOOGLE_CLOUD_AVAILABLE:
+            logger.warning("Google Cloud libraries not available. VertexAI functionality will be limited.")
+            self.available = False
+            return
+        
         self.project_id = project_id or os.getenv("GOOGLE_CLOUD_PROJECT")
         self.location = location
         self.model_name = model_name
+        self.available = True
         
         if not self.project_id:
-            raise ValueError("Google Cloud project ID must be provided")
+            logger.warning("Google Cloud project ID not provided. VertexAI functionality will be limited.")
+            self.available = False
+            return
         
         self._initialize_client()
     
     def _initialize_client(self) -> None:
         """Initialize the Vertex AI client."""
+        if not GOOGLE_CLOUD_AVAILABLE:
+            self.available = False
+            return
+            
         try:
             # Initialize Vertex AI
             aiplatform.init(
@@ -69,11 +88,11 @@ class VertexAIClient:
             logger.info(f"Initialized Vertex AI client for project: {self.project_id}")
             
         except DefaultCredentialsError as e:
-            logger.error(f"Failed to authenticate with Google Cloud: {str(e)}")
-            raise
+            logger.warning(f"Failed to authenticate with Google Cloud: {str(e)}")
+            self.available = False
         except Exception as e:
-            logger.error(f"Failed to initialize Vertex AI client: {str(e)}")
-            raise
+            logger.warning(f"Failed to initialize Vertex AI client: {str(e)}")
+            self.available = False
     
     async def assess_credit_application(
         self,
@@ -92,6 +111,10 @@ class VertexAIClient:
         Returns:
             Complete credit assessment result
         """
+        if not hasattr(self, 'available') or not self.available:
+            logger.warning("Vertex AI not available, using fallback assessment")
+            return await self._fallback_assessment(application, transaction_summary)
+        
         try:
             start_time = datetime.utcnow()
             
@@ -464,3 +487,127 @@ Keep the explanation professional but accessible to non-experts.
         except Exception as e:
             logger.error(f"Failed to generate assessment explanation: {str(e)}")
             return assessment_result.reasoning
+    
+    async def _fallback_assessment(
+        self,
+        application: CreditApplication,
+        transaction_summary: Optional[TransactionSummary] = None
+    ) -> CreditAssessmentResult:
+        """
+        Provide a basic fallback assessment when Vertex AI is not available.
+        
+        Args:
+            application: Credit application data
+            transaction_summary: Bank transaction analysis
+            
+        Returns:
+            Basic credit assessment result
+        """
+        logger.info("Using fallback assessment method")
+        
+        # Basic rule-based assessment
+        score = 500  # Start with neutral score
+        reasoning_parts = []
+        
+        # Income assessment
+        if application.annual_income >= 50000:
+            score += 50
+            reasoning_parts.append("Adequate annual income")
+        elif application.annual_income >= 30000:
+            score += 20
+            reasoning_parts.append("Moderate annual income")
+        else:
+            score -= 30
+            reasoning_parts.append("Low annual income may pose risk")
+        
+        # Employment assessment
+        if application.employment_status == "employed":
+            score += 30
+            reasoning_parts.append("Stable employment status")
+        elif application.employment_status == "self_employed":
+            score += 10
+            reasoning_parts.append("Self-employed status noted")
+        else:
+            score -= 20
+            reasoning_parts.append("Unemployment may affect repayment ability")
+        
+        # Loan amount vs income ratio
+        if hasattr(application, 'requested_amount') and application.requested_amount:
+            debt_to_income = application.requested_amount / application.annual_income
+            if debt_to_income < 0.3:
+                score += 20
+                reasoning_parts.append("Low debt-to-income ratio")
+            elif debt_to_income > 0.5:
+                score -= 30
+                reasoning_parts.append("High debt-to-income ratio")
+        
+        # Transaction summary assessment
+        if transaction_summary:
+            if transaction_summary.average_monthly_balance > 5000:
+                score += 25
+                reasoning_parts.append("Good average account balance")
+            elif transaction_summary.average_monthly_balance < 1000:
+                score -= 15
+                reasoning_parts.append("Low average account balance")
+            
+            if transaction_summary.overdraft_count == 0:
+                score += 15
+                reasoning_parts.append("No overdrafts detected")
+            elif transaction_summary.overdraft_count > 3:
+                score -= 25
+                reasoning_parts.append("Multiple overdrafts detected")
+        
+        # Normalize score to 300-850 range
+        score = max(300, min(850, score))
+        
+        # Determine approval
+        if score >= 650:
+            approved = True
+            decision = "APPROVED"
+        elif score >= 550:
+            approved = False
+            decision = "CONDITIONAL"
+        else:
+            approved = False
+            decision = "DECLINED"
+        
+        # Create basic risk factors
+        risk_factors = RiskFactors(
+            high_debt_to_income=hasattr(application, 'requested_amount') and 
+                               application.requested_amount / application.annual_income > 0.5,
+            insufficient_income=application.annual_income < 30000,
+            poor_credit_history=False,  # Can't assess without credit data
+            irregular_income=application.employment_status not in ["employed"],
+            excessive_expenses=False,  # Can't assess without detailed transaction data
+            frequent_overdrafts=transaction_summary and transaction_summary.overdraft_count > 3 if transaction_summary else False,
+            short_employment_history=False,  # Can't assess without employment history
+            insufficient_collateral=False,
+            high_existing_debt=False,
+            unstable_residence=False
+        )
+        
+        # Create confidence scores (lower for fallback)
+        confidence_scores = ConfidenceScore(
+            overall_confidence=0.4,  # Lower confidence for rule-based assessment
+            credit_score_confidence=0.3,
+            income_confidence=0.6,
+            transaction_confidence=0.5 if transaction_summary else 0.2,
+            application_confidence=0.7,
+            data_quality_score=0.5
+        )
+        
+        reasoning = f"Fallback assessment based on basic rules. {' '.join(reasoning_parts)}. Score: {score}/850."
+        
+        return CreditAssessmentResult(
+            application_id=application.application_id,
+            assessment_id=f"fallback_{application.application_id}_{int(datetime.utcnow().timestamp())}",
+            approved=approved,
+            credit_score=score,
+            decision=decision,
+            reasoning=reasoning,
+            confidence_scores=confidence_scores,
+            risk_factors=risk_factors,
+            assessment_timestamp=datetime.utcnow(),
+            processing_time_seconds=0.1,
+            model_version="fallback_v1.0"
+        )
