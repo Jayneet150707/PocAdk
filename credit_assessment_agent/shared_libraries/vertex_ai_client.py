@@ -232,7 +232,10 @@ Provide a thorough, professional assessment that considers all available data.
         """Generate assessment using Vertex AI model."""
         try:
             # Use Vertex AI Generative AI
-            from vertexai.generative_models import GenerativeModel
+            try:
+                from vertexai.generative_models import GenerativeModel
+            except ImportError:
+                raise ImportError("vertexai package not installed. Install with: pip install google-cloud-aiplatform")
             
             model = GenerativeModel(self.model_name)
             
