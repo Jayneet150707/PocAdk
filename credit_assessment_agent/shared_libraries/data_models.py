@@ -58,8 +58,8 @@ class ApplicantInfo(BaseModel):
     employment_status: EmploymentStatus
     employment_duration_months: Optional[int] = Field(None, ge=0)
     address: Optional[str] = Field(None, max_length=200)
-    phone: Optional[str] = Field(None, regex=r'^\+?[\d\s\-\(\)]+$')
-    email: Optional[str] = Field(None, regex=r'^[\w\.-]+@[\w\.-]+\.\w+$')
+    phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]+$')
+    email: Optional[str] = Field(None, pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')
     
     @validator('income')
     def validate_income(cls, v: Decimal) -> Decimal:
@@ -185,5 +185,5 @@ class AssessmentRequest(BaseModel):
     credit_application: CreditApplication
     bank_statement_data: Optional[List[BankTransaction]] = None
     additional_documents: Optional[List[str]] = None
-    priority: str = Field(default="normal", regex=r'^(low|normal|high|urgent)$')
+    priority: str = Field(default="normal", pattern=r'^(low|normal|high|urgent)$')
     callback_url: Optional[str] = None
