@@ -510,10 +510,11 @@ Keep the explanation professional but accessible to non-experts.
         reasoning_parts = []
         
         # Income assessment
-        if application.annual_income >= 50000:
+        annual_income = float(application.applicant_info.income)
+        if annual_income >= 50000:
             score += 50
             reasoning_parts.append("Adequate annual income")
-        elif application.annual_income >= 30000:
+        elif annual_income >= 30000:
             score += 20
             reasoning_parts.append("Moderate annual income")
         else:
@@ -521,10 +522,11 @@ Keep the explanation professional but accessible to non-experts.
             reasoning_parts.append("Low annual income may pose risk")
         
         # Employment assessment
-        if application.employment_status == "employed":
+        employment_status = application.applicant_info.employment_status
+        if employment_status == "employed":
             score += 30
             reasoning_parts.append("Stable employment status")
-        elif application.employment_status == "self_employed":
+        elif employment_status == "self_employed":
             score += 10
             reasoning_parts.append("Self-employed status noted")
         else:
@@ -532,8 +534,8 @@ Keep the explanation professional but accessible to non-experts.
             reasoning_parts.append("Unemployment may affect repayment ability")
         
         # Loan amount vs income ratio
-        if hasattr(application, 'requested_amount') and application.requested_amount:
-            debt_to_income = application.requested_amount / application.annual_income
+        if hasattr(application, 'loan_amount') and application.loan_amount:
+            debt_to_income = float(application.loan_amount) / annual_income
             if debt_to_income < 0.3:
                 score += 20
                 reasoning_parts.append("Low debt-to-income ratio")
@@ -573,11 +575,11 @@ Keep the explanation professional but accessible to non-experts.
         
         # Create basic risk factors
         risk_factors = RiskFactors(
-            high_debt_to_income=hasattr(application, 'requested_amount') and 
-                               application.requested_amount / application.annual_income > 0.5,
-            insufficient_income=application.annual_income < 30000,
+            high_debt_to_income=hasattr(application, 'loan_amount') and 
+                               float(application.loan_amount) / annual_income > 0.5,
+            insufficient_income=annual_income < 30000,
             poor_credit_history=False,  # Can't assess without credit data
-            irregular_income=application.employment_status not in ["employed"],
+            irregular_income=employment_status not in ["employed"],
             excessive_expenses=False,  # Can't assess without detailed transaction data
             frequent_overdrafts=transaction_summary and transaction_summary.overdraft_count > 3 if transaction_summary else False,
             short_employment_history=False,  # Can't assess without employment history

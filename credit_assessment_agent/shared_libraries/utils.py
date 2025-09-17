@@ -308,10 +308,14 @@ def calculate_monthly_payment(
         if annual_interest_rate == 0:
             return loan_amount / term_months
         
-        monthly_rate = annual_interest_rate / 12
-        payment = loan_amount * (
-            monthly_rate * (1 + monthly_rate) ** term_months
-        ) / ((1 + monthly_rate) ** term_months - 1)
+        # Convert to Decimal for consistent arithmetic
+        monthly_rate = Decimal(str(annual_interest_rate)) / 12
+        term_decimal = Decimal(str(term_months))
+        
+        # Calculate payment using Decimal arithmetic
+        numerator = loan_amount * monthly_rate * (1 + monthly_rate) ** term_decimal
+        denominator = (1 + monthly_rate) ** term_decimal - 1
+        payment = numerator / denominator
         
         return payment
         
