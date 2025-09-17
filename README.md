@@ -1,323 +1,330 @@
-# Credit Assessment Agent POC
+# 🏦 Paisalo Credit Assessment POC
 
-A Proof of Concept (POC) implementation of a Credit Assessment Agent using Google ADK architecture that integrates with Vertex AI for intelligent credit application processing.
+A comprehensive AI-powered credit assessment system built with Google ADK (Agent Development Kit) and Vertex AI, implementing Paisalo's specific business rules and policies.
 
-## 🎯 Definition of Done
+## 🎯 Overview
 
-This POC demonstrates:
-- ✅ **Google ADK Agent Architecture**: Structured agent system with sub-agents and tools
-- ✅ **Vertex AI Integration**: With fallback assessment when cloud services unavailable
-- ✅ **Credit Application Processing**: Receives fabricated credit data and analyzes credibility
-- ✅ **Confidence Scoring**: Returns assessment with confidence metrics
-- ✅ **Bank Statement Analysis**: PDF processing capabilities (with sample data)
-- ✅ **FastAPI Backend**: RESTful API endpoints for data input and JSON responses
-- ✅ **Robust Error Handling**: Graceful degradation when dependencies unavailable
+This POC demonstrates a complete credit assessment solution that:
+
+- ✅ **Validates applications** against Paisalo's business rules
+- 🤖 **Uses Vertex AI** for intelligent risk assessment
+- 📊 **Calculates EMI** using SLM (Straight Line Method)
+- 🔍 **Analyzes bank statements** and transaction patterns
+- 📋 **Provides detailed recommendations** and reasoning
+- 🚀 **Exposes REST API** for integration
 
 ## 🏗️ Architecture
 
 ```
-credit_assessment_agent/
-├── shared_libraries/           # Helper functions and utilities
-│   ├── data_models.py         # Pydantic models for data validation
-│   ├── pdf_processor.py       # PDF bank statement processing
-│   ├── vertex_ai_client.py    # Vertex AI integration with fallback
-│   └── utils.py               # Utility functions
-├── sub_agents/                # Sub-agent implementations
-│   └── transaction_analyzer/  # Bank transaction analysis agent
-│       ├── tools/             # Transaction analysis tools
-│       ├── agent.py           # Core transaction analyzer logic
-│       └── prompt.py          # AI prompts for transaction analysis
-├── tools/                     # Main agent tools
-├── agent.py                   # Core credit assessment agent
-├── prompt.py                  # Main agent prompts
-└── __init__.py               # Agent initialization
+├── credit_assessment_agent/           # Main agent implementation
+│   ├── shared_libraries/              # Common utilities and models
+│   │   ├── data_models.py            # Pydantic data models
+│   │   ├── paisalo_rules.py          # Business rules engine
+│   │   ├── vertex_ai_client.py       # Vertex AI integration
+│   │   ├── pdf_processor.py          # Bank statement processing
+│   │   └── utils.py                  # Helper functions
+│   ├── sub_agents/                   # Specialized sub-agents
+│   │   └── transaction_analyzer/     # Bank transaction analysis
+│   ├── tools/                        # Agent tools and utilities
+│   └── agent.py                      # Main orchestrating agent
+├── main.py                           # FastAPI application
+├── test_paisalo_rules.py            # Comprehensive test suite
+├── sample_paisalo_request.json      # Sample test data
+└── requirements.txt                 # Python dependencies
 ```
+
+## 🔧 Paisalo Business Rules
+
+### 1. **Age Validation**
+- **Range**: 21-57 years
+- **Action**: Automatic rejection if outside range
+
+### 2. **Credit Score Requirements**
+- **Range**: 18-650
+- **Action**: Automatic rejection if outside range
+
+### 3. **Document Requirements**
+- **Valid Combinations**:
+  - Voter ID + PAN Card
+  - Driving License + PAN Card
+- **PAN Format**: `ABCDE1234F` (5 letters + 4 digits + 1 letter)
+
+### 4. **Loan Amount Limits**
+- **Range**: ₹50,000 - ₹1,00,000
+- **Action**: Automatic rejection if outside range
+
+### 5. **EMI Calculation (SLM Method)**
+- **12 months**: 7% ROI
+- **24 months**: 9% ROI
+- **36 months**: 12% ROI
+- **48 months**: 18% ROI
+
+### 6. **Income vs Expense Validation**
+- **Rule**: Total expenses ≤ 50% of total income
+- **Calculation**: (Personal + Family Expenses) / (Personal + Family Income)
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.13+
-- Optional: Google Cloud credentials for Vertex AI (works without)
-- Optional: python-multipart for file uploads
+
+- Python 3.9+
+- Google Cloud Project with Vertex AI enabled
+- Service Account with appropriate permissions
 
 ### Installation
 
-1. **Clone and setup**:
+1. **Clone the repository**
 ```bash
 git clone <repository-url>
-cd PocAdk
+cd paisalo-credit-assessment
 ```
 
-2. **Install dependencies** (optional - works without):
+2. **Install dependencies**
 ```bash
 pip install -r requirements.txt
-# OR install specific dependencies:
-pip install fastapi uvicorn pydantic
-pip install google-cloud-aiplatform  # Optional for Vertex AI
-pip install PyPDF2                    # Optional for PDF processing
-pip install python-multipart         # Optional for file uploads
 ```
 
-3. **Environment setup** (optional):
+3. **Set up Google Cloud credentials**
 ```bash
-cp .env.example .env
-# Edit .env with your Google Cloud credentials if available
+export GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account.json"
+export GOOGLE_CLOUD_PROJECT="your-project-id"
 ```
 
-### Running the Service
-
+4. **Run the API server**
 ```bash
-# Start the FastAPI server
 python main.py
-
-# Or using uvicorn directly
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The API will be available at: http://localhost:8000
+The API will be available at `http://localhost:8000`
 
-## 📡 API Endpoints
+### 📚 API Documentation
 
-### Health Check
-```bash
-GET /health
-```
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "services": {
-    "vertex_ai": "available",
-    "credit_agent": "available"
-  },
-  "timestamp": "2024-09-16T11:30:00Z"
-}
-```
-
-### Credit Assessment
-```bash
-POST /api/v1/assess-credit
-```
-
-**Request Body**:
-```json
-{
-  "credit_application": {
-    "application_id": "TEST_001",
-    "applicant_info": {
-      "name": "John Doe",
-      "age": 35,
-      "income": 75000,
-      "employment_status": "employed",
-      "employment_duration_months": 24,
-      "address": "123 Main St, Anytown, USA",
-      "phone": "+1234567890",
-      "email": "john.doe@example.com"
-    },
-    "credit_score": 720,
-    "loan_amount": 25000,
-    "loan_purpose": "home_improvement",
-    "requested_term_months": 60
-  },
-  "priority": "normal"
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "assessment": {
-    "application_id": "TEST_001",
-    "assessment_id": "ASSESS_20250916134311_b4e552de",
-    "approved": true,
-    "risk_level": "low",
-    "recommended_loan_amount": "25000.0",
-    "recommended_interest_rate": 0.065,
-    "confidence_scores": {
-      "overall_confidence": 0.65,
-      "credit_score_confidence": 0.85,
-      "income_confidence": 0.9,
-      "transaction_confidence": 0.3,
-      "application_confidence": 0.49,
-      "data_quality_score": 0.44
-    },
-    "risk_factors": {
-      "high_debt_to_income": false,
-      "insufficient_income": false,
-      "poor_credit_history": false,
-      "irregular_income": false,
-      "excessive_expenses": false,
-      "frequent_overdrafts": false,
-      "short_employment_history": false,
-      "high_loan_to_value": false,
-      "risk_factors_count": 0,
-      "risk_level": "low"
-    },
-    "reasoning": "Credit Assessment Decision: APPROVED...",
-    "recommendations": [
-      "Maintain current financial habits to ensure successful repayment",
-      "Consider setting up automatic payments to avoid missed payments"
-    ],
-    "assessed_at": "2025-09-16T13:43:11.089867",
-    "processing_time_seconds": 0.000554
-  },
-  "message": "Credit assessment completed successfully"
-}
-```
-
-### Bank Statement Upload
-```bash
-POST /api/v1/upload-bank-statement
-```
-
-**Note**: Requires `python-multipart` dependency. Returns 501 if not available.
+Once the server is running, visit:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
 
 ## 🧪 Testing
 
-### Manual Testing
+### Run Paisalo Rules Tests
 ```bash
-# Test health endpoint
-curl http://localhost:8000/health
-
-# Test credit assessment
-curl -X POST http://localhost:8000/api/v1/assess-credit \
-  -H "Content-Type: application/json" \
-  -d @sample_request.json
+python test_paisalo_rules.py
 ```
 
-### Sample Request File
-Create `sample_request.json`:
+### Sample API Request
+```bash
+curl -X POST "http://localhost:8000/assess" \
+  -H "Content-Type: application/json" \
+  -d @sample_paisalo_request.json
+```
+
+## 📋 API Endpoints
+
+### 🏥 Health Check
+```http
+GET /health
+```
+Returns system status and component availability.
+
+### 🔍 Credit Assessment
+```http
+POST /assess
+```
+Performs complete credit assessment with Paisalo rules validation.
+
+**Request Body:**
 ```json
 {
   "credit_application": {
-    "application_id": "SAMPLE_001",
+    "application_id": "PAISALO_001",
     "applicant_info": {
-      "name": "Jane Smith",
-      "age": 28,
-      "income": 65000,
+      "name": "Rajesh Kumar",
+      "age": 35,
+      "income": 45000,
+      "family_income": 25000,
+      "personal_expenses": 20000,
+      "family_expenses": 15000,
       "employment_status": "employed",
-      "employment_duration_months": 36,
-      "phone": "+1555123456",
-      "email": "jane.smith@example.com"
+      "pan_number": "ABCDE1234F",
+      "has_voter_id": true,
+      "documents_provided": ["pan", "voter_id"]
     },
-    "credit_score": 680,
-    "loan_amount": 15000,
-    "loan_purpose": "debt_consolidation",
-    "requested_term_months": 48
+    "credit_score": 450,
+    "loan_amount": 75000,
+    "requested_term_months": 24
   }
 }
 ```
 
-## 🔧 Features
+### ✅ Rules Validation
+```http
+POST /validate
+```
+Validates application against Paisalo business rules only.
 
-### ✅ Implemented
-- **Google ADK Architecture**: Structured agent system
-- **Vertex AI Integration**: With intelligent fallback
-- **Credit Assessment**: Rule-based and AI-powered analysis
-- **Risk Analysis**: Comprehensive risk factor evaluation
-- **Confidence Scoring**: Multi-dimensional confidence metrics
-- **PDF Processing**: Bank statement analysis capabilities
-- **RESTful API**: FastAPI-based service endpoints
-- **Error Handling**: Graceful degradation and error responses
-- **Logging**: Structured logging throughout the system
+### 💰 EMI Calculator
+```http
+POST /calculate-emi
+```
+Calculates EMI using Paisalo's SLM method.
 
-### 🔄 Fallback Mechanisms
-When optional dependencies are unavailable:
-- **Vertex AI**: Falls back to rule-based assessment
-- **PDF Processing**: Returns appropriate error messages
-- **File Uploads**: Returns 501 with installation instructions
+**Request:**
+```json
+{
+  "loan_amount": 75000,
+  "term_months": 24
+}
+```
 
-## 🎯 Assessment Logic
+### 📖 Business Rules Info
+```http
+GET /business-rules
+```
+Returns detailed information about all Paisalo business rules.
 
-The system uses a multi-layered assessment approach:
+### 📄 Sample Request
+```http
+GET /sample-request
+```
+Returns a sample request for testing purposes.
 
-1. **Primary Assessment** (with Vertex AI):
-   - Advanced ML-based credit scoring
-   - Natural language reasoning
-   - Complex pattern recognition
+## 🎯 Sample Response
 
-2. **Fallback Assessment** (rule-based):
-   - Income-based scoring (≥$50k: +50 points)
-   - Employment status evaluation
-   - Debt-to-income ratio analysis
-   - Transaction pattern analysis
-   - Risk factor identification
+```json
+{
+  "success": true,
+  "assessment_result": {
+    "application_id": "PAISALO_001",
+    "approved": true,
+    "risk_level": "low",
+    "recommended_loan_amount": 75000.0,
+    "recommended_interest_rate": 0.09,
+    "confidence_scores": {
+      "overall_confidence": 0.85,
+      "credit_score_confidence": 0.75,
+      "income_confidence": 0.90
+    },
+    "reasoning": "=== PAISALO CREDIT ASSESSMENT ===\nApplication processed using Paisalo business rules...",
+    "recommendations": [
+      "Monthly EMI: ₹3,687.50 using SLM method",
+      "Set up automatic EMI payments to avoid defaults"
+    ]
+  },
+  "paisalo_validation": {
+    "is_valid": true,
+    "risk_level": "low",
+    "emi_details": {
+      "monthly_emi": 3687.50,
+      "annual_roi": 0.09,
+      "total_interest": 13500.0,
+      "total_amount": 88500.0
+    }
+  }
+}
+```
 
-3. **Confidence Scoring**:
-   - Overall confidence (0.0-1.0)
-   - Credit score confidence
-   - Income verification confidence
-   - Transaction analysis confidence
-   - Application completeness score
+## 🔧 Configuration
 
-## 🔒 Security & Privacy
+### Environment Variables
 
-- Input validation using Pydantic models
-- Secure file handling for PDF uploads
-- No sensitive data logging
-- Temporary file cleanup
-- Error message sanitization
+```bash
+# Google Cloud Configuration
+GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_REGION=us-central1
 
-## 📊 Monitoring & Observability
+# API Configuration
+API_HOST=0.0.0.0
+API_PORT=8000
+LOG_LEVEL=INFO
 
-- Structured logging with timestamps
-- Processing time metrics
-- Service health checks
-- Error tracking and reporting
-- Assessment audit trail
+# Paisalo Configuration
+PAISALO_MIN_AGE=21
+PAISALO_MAX_AGE=57
+PAISALO_MIN_CREDIT_SCORE=18
+PAISALO_MAX_CREDIT_SCORE=650
+```
 
-## 🚀 Production Considerations
+## 🧪 Test Scenarios
 
-For production deployment:
+The system includes comprehensive test coverage for:
 
-1. **Environment Variables**:
-   - `GOOGLE_CLOUD_PROJECT`: Your GCP project ID
-   - `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account key
-   - `API_HOST`, `API_PORT`: Server configuration
-   - `LOG_LEVEL`: Logging verbosity
+### ✅ **Approval Scenarios**
+- Valid age (21-57)
+- Valid credit score (18-650)
+- Valid loan amount (₹50K-₹1L)
+- Valid documents (Voter+PAN or DL+PAN)
+- Expenses ≤ 50% of income
 
-2. **Dependencies**:
-   - Install all optional dependencies for full functionality
-   - Configure Google Cloud authentication
-   - Set up proper database for assessment storage
+### ❌ **Rejection Scenarios**
+- Age outside range
+- Credit score outside range
+- Loan amount outside range
+- Invalid document combinations
+- Expenses > 50% of income
+- Invalid PAN format
 
-3. **Scaling**:
-   - Use proper ASGI server (Gunicorn + Uvicorn)
-   - Implement database persistence
-   - Add caching layer for frequent assessments
-   - Configure load balancing
+### 💰 **EMI Calculations**
+- 12 months @ 7% ROI
+- 24 months @ 9% ROI
+- 36 months @ 12% ROI
+- 48 months @ 18% ROI
 
-## 📝 Development
+## 🔍 Monitoring and Logging
 
-### Project Structure
-- `main.py`: FastAPI application entry point
-- `credit_assessment_agent/`: Core agent implementation
-- `tests/`: Unit tests (to be implemented)
-- `deployment/`: Deployment configurations
-- `eval/`: Evaluation methods and metrics
+The system provides comprehensive logging for:
 
-### Adding New Features
-1. Extend data models in `shared_libraries/data_models.py`
-2. Add new tools in respective `tools/` directories
-3. Update agent logic in `agent.py` files
-4. Add API endpoints in `main.py`
-5. Update tests and documentation
+- 📋 Application processing steps
+- ✅ Business rules validation results
+- 🤖 AI assessment decisions
+- ⚠️ Error conditions and warnings
+- 📊 Performance metrics
+
+## 🚀 Deployment
+
+### Docker Deployment
+```dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+EXPOSE 8000
+
+CMD ["python", "main.py"]
+```
+
+### Google Cloud Run
+```bash
+gcloud run deploy paisalo-credit-assessment \
+  --source . \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated
+```
 
 ## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests
-5. Submit a pull request
+4. Add tests for new functionality
+5. Run the test suite
+6. Submit a pull request
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## 🆘 Support
+
+For support and questions:
+- 📧 Email: support@paisalo.com
+- 📞 Phone: +91-XXXX-XXXX
+- 🌐 Website: https://paisalo.com
+
 ---
 
-**POC Status**: ✅ Complete - All requirements met with robust fallback mechanisms
+**Built with ❤️ using Google ADK and Vertex AI**
 

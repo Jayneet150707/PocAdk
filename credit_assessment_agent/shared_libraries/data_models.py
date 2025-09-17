@@ -50,16 +50,33 @@ class RiskLevel(str, Enum):
     VERY_HIGH = "very_high"
 
 
+class DocumentType(str, Enum):
+    """Document type enumeration for Paisalo requirements."""
+    PAN = "pan"
+    VOTER_ID = "voter_id"
+    DRIVING_LICENSE = "driving_license"
+    AADHAAR = "aadhaar"
+
+
 class ApplicantInfo(BaseModel):
     """Applicant personal information."""
     name: str = Field(..., min_length=2, max_length=100)
     age: int = Field(..., ge=18, le=100)
-    income: Decimal = Field(..., ge=0)
+    income: Decimal = Field(..., ge=0, description="Personal monthly income")
+    family_income: Optional[Decimal] = Field(None, ge=0, description="Family monthly income")
+    personal_expenses: Optional[Decimal] = Field(None, ge=0, description="Personal monthly expenses")
+    family_expenses: Optional[Decimal] = Field(None, ge=0, description="Family monthly expenses")
     employment_status: EmploymentStatus
     employment_duration_months: Optional[int] = Field(None, ge=0)
     address: Optional[str] = Field(None, max_length=200)
     phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]+$')
     email: Optional[str] = Field(None, pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')
+    
+    # Paisalo-specific document fields
+    pan_number: Optional[str] = Field(None, description="PAN card number")
+    has_voter_id: bool = Field(False, description="Has valid Voter ID")
+    has_driving_license: bool = Field(False, description="Has valid Driving License")
+    documents_provided: List[DocumentType] = Field(default_factory=list, description="List of documents provided")
     
     @validator('income')
     def validate_income(cls, v: Decimal) -> Decimal:
@@ -67,26 +84,49 @@ class ApplicantInfo(BaseModel):
         if v > Decimal('10000000'):  # 10M limit
             raise ValueError('Income exceeds reasonable limit')
         return v
+    
+    @validator('pan_number')
+    def validate_pan_number(cls, v: Optional[str]) -> Optional[str]:
+        """Validate PAN number format using regex."""
+        if v is None:
+            return v
+        
+        import re
+        # PAN format: 5 letters, 4 digits, 1 letter (e.g., ABCDE1234F)
+        pan_pattern = r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$'
+        
+        if not re.match(pan_pattern, v.upper()):
+            raise ValueError('Invalid PAN format. Expected format: ABCDE1234F')
+        
+        return v.upper()
 
 
 class CreditApplication(BaseModel):
-    """Complete credit application data."""
+    """Complete credit application data for Paisalo."""
     application_id: str = Field(..., min_length=1)
     applicant_info: ApplicantInfo
-    credit_score: int = Field(..., ge=300, le=850)
-    loan_amount: Decimal = Field(..., ge=1000)
+    credit_score: int = Field(..., ge=18, le=650, description="Paisalo credit score range: 18-650")
+    loan_amount: Decimal = Field(..., ge=50000, le=100000, description="Paisalo loan amount range: ₹50,000 - ₹1,00,000")
     loan_purpose: LoanPurpose
-    requested_term_months: int = Field(..., ge=6, le=360)
+    requested_term_months: int = Field(..., description="Loan term in months (12, 24, 36, or 48)")
     down_payment: Optional[Decimal] = Field(None, ge=0)
     existing_debt: Optional[Decimal] = Field(None, ge=0)
     assets: Optional[Decimal] = Field(None, ge=0)
     submitted_at: datetime = Field(default_factory=datetime.utcnow)
     
+    @validator('requested_term_months')
+    def validate_term_months(cls, v: int) -> int:
+        """Validate loan term matches Paisalo's allowed terms."""
+        allowed_terms = [12, 24, 36, 48]
+        if v not in allowed_terms:
+            raise ValueError(f'Loan term must be one of {allowed_terms} months')
+        return v
+    
     @validator('loan_amount')
     def validate_loan_amount(cls, v: Decimal) -> Decimal:
-        """Validate loan amount is reasonable."""
-        if v > Decimal('5000000'):  # 5M limit
-            raise ValueError('Loan amount exceeds limit')
+        """Validate loan amount is within Paisalo's range."""
+        if v < Decimal('50000') or v > Decimal('100000'):
+            raise ValueError('Loan amount must be between ₹50,000 and ₹1,00,000')
         return v
 
 

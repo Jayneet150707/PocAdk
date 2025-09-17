@@ -23,6 +23,7 @@ from .shared_libraries.data_models import (
 )
 from .shared_libraries.vertex_ai_client import VertexAIClient
 from .shared_libraries.pdf_processor import PDFProcessor
+from .shared_libraries.paisalo_rules import PaisaloBusinessRules
 from .shared_libraries.utils import (
     extract_financial_metrics,
     calculate_confidence_score,
@@ -87,12 +88,25 @@ class CreditAssessmentAgent:
         assessment_id = generate_assessment_id(application.application_id)
         
         try:
-            logger.info(f"Starting credit assessment {assessment_id} for application {application.application_id}")
+            logger.info(f"Starting Paisalo credit assessment {assessment_id} for application {application.application_id}")
             
-            # Step 1: Extract financial metrics
+            # Step 1: Paisalo Business Rules Validation (Primary Check)
+            paisalo_validation = PaisaloBusinessRules.perform_complete_validation(application)
+            
+            # If Paisalo rules fail, return immediate rejection
+            if not paisalo_validation['is_valid']:
+                logger.info(f"Application {application.application_id} rejected by Paisalo business rules")
+                return self._create_paisalo_rejection_assessment(
+                    application=application,
+                    assessment_id=assessment_id,
+                    validation_results=paisalo_validation,
+                    processing_time=(datetime.utcnow() - start_time).total_seconds()
+                )
+            
+            # Step 2: Extract financial metrics
             financial_metrics = extract_financial_metrics(application)
             
-            # Step 2: Analyze bank transactions if provided
+            # Step 3: Analyze bank transactions if provided
             transaction_summary = None
             transaction_analysis = None
             
@@ -106,7 +120,7 @@ class CreditAssessmentAgent:
                     transaction_summary = TransactionSummary(**transaction_response.data["transaction_summary"])
                     transaction_analysis = transaction_response.data
             
-            # Step 3: Calculate confidence scores
+            # Step 4: Calculate confidence scores
             confidence_scores = calculate_confidence_score(
                 credit_score=application.credit_score,
                 income=application.applicant_info.income,
@@ -115,7 +129,7 @@ class CreditAssessmentAgent:
                 data_completeness=self._calculate_data_completeness(application, bank_transactions)
             )
             
-            # Step 4: Calculate risk assessment
+            # Step 5: Calculate risk assessment
             debt_to_income_ratio = financial_metrics.get('debt_to_income_ratio', 0.0)
             income_stability = transaction_summary.income_stability_score if transaction_summary else 1.0
             overdraft_count = transaction_summary.overdraft_incidents if transaction_summary else 0
@@ -127,12 +141,12 @@ class CreditAssessmentAgent:
                 overdraft_count=overdraft_count
             )
             
-            # Step 5: Identify risk factors
+            # Step 6: Identify risk factors
             risk_factors = self._identify_risk_factors(
                 application, financial_metrics, transaction_summary
             )
             
-            # Step 6: AI-powered assessment if available
+            # Step 7: AI-powered assessment if available
             ai_assessment = None
             if self.vertex_ai_client:
                 try:
@@ -147,14 +161,14 @@ class CreditAssessmentAgent:
                 except Exception as e:
                     logger.warning(f"AI assessment failed, using fallback: {str(e)}")
             
-            # Step 7: Make final decision
+            # Step 8: Make final decision
             if ai_assessment:
                 # Use AI assessment as primary decision
                 final_result = ai_assessment
                 final_result.transaction_summary = transaction_summary
             else:
-                # Fallback to rule-based assessment
-                final_result = self._create_fallback_assessment(
+                # Fallback to Paisalo rule-based assessment
+                final_result = self._update_fallback_assessment_with_paisalo_rules(
                     application=application,
                     assessment_id=assessment_id,
                     confidence_scores=confidence_scores,
@@ -164,7 +178,7 @@ class CreditAssessmentAgent:
                     transaction_summary=transaction_summary
                 )
             
-            # Step 8: Add processing metadata
+            # Step 9: Add processing metadata and Paisalo branding
             processing_time = (datetime.utcnow() - start_time).total_seconds()
             final_result.processing_time_seconds = processing_time
             
@@ -488,4 +502,155 @@ Decline Rationale:
                 "Contact support if the issue persists"
             ],
             processing_time_seconds=processing_time
+        )
+    
+    def _create_paisalo_rejection_assessment(
+        self,
+        application: CreditApplication,
+        assessment_id: str,
+        validation_results: Dict[str, any],
+        processing_time: float
+    ) -> CreditAssessmentResult:
+        """Create assessment result for Paisalo business rules rejection."""
+        
+        # Generate detailed reasoning with Paisalo branding
+        reasoning = PaisaloBusinessRules.generate_paisalo_assessment_summary(
+            application, validation_results
+        )
+        
+        # Create recommendations based on failed validations
+        recommendations = []
+        for validation_name, validation_data in validation_results['validations'].items():
+            if not validation_data['valid']:
+                if validation_name == 'age':
+                    recommendations.append(f"Applicant must be between {PaisaloBusinessRules.MIN_AGE}-{PaisaloBusinessRules.MAX_AGE} years old")
+                elif validation_name == 'credit_score':
+                    recommendations.append(f"Credit score must be between {PaisaloBusinessRules.MIN_CREDIT_SCORE}-{PaisaloBusinessRules.MAX_CREDIT_SCORE}")
+                elif validation_name == 'loan_amount':
+                    recommendations.append(f"Loan amount must be between ₹{PaisaloBusinessRules.MIN_LOAN_AMOUNT:,.2f}-₹{PaisaloBusinessRules.MAX_LOAN_AMOUNT:,.2f}")
+                elif validation_name == 'documents':
+                    recommendations.append("Provide valid document combination: (Voter ID + PAN) OR (Driving License + PAN)")
+                elif validation_name == 'income_expense_ratio':
+                    recommendations.append("Reduce expenses to below 50% of total income")
+        
+        if not recommendations:
+            recommendations.append("Please review application details and resubmit")
+        
+        # Create basic risk factors for rejection
+        risk_factors = RiskFactors(
+            risk_factors_count=len(validation_results['rejection_reasons']),
+            risk_level=RiskLevel.VERY_HIGH,
+            insufficient_income=any('income' in reason.lower() for reason in validation_results['rejection_reasons']),
+            poor_credit_history=any('credit' in reason.lower() for reason in validation_results['rejection_reasons'])
+        )
+        
+        # Create low confidence scores for rejection
+        confidence_scores = ConfidenceScore(
+            overall_confidence=0.1,
+            credit_score_confidence=0.2,
+            income_confidence=0.2,
+            transaction_confidence=0.1,
+            application_confidence=0.1,
+            data_quality_score=0.3
+        )
+        
+        return CreditAssessmentResult(
+            application_id=application.application_id,
+            assessment_id=assessment_id,
+            approved=False,
+            risk_level=validation_results['risk_level'],
+            recommended_loan_amount=None,
+            recommended_interest_rate=None,
+            confidence_scores=confidence_scores,
+            risk_factors=risk_factors,
+            reasoning=reasoning,
+            recommendations=recommendations,
+            processing_time_seconds=processing_time
+        )
+    
+    def _update_fallback_assessment_with_paisalo_rules(
+        self,
+        application: CreditApplication,
+        assessment_id: str,
+        confidence_scores: ConfidenceScore,
+        risk_factors: RiskFactors,
+        risk_level: RiskLevel,
+        financial_metrics: Dict[str, Any],
+        transaction_summary: Optional[TransactionSummary]
+    ) -> CreditAssessmentResult:
+        """Create fallback assessment with Paisalo business rules integration."""
+        
+        # Get Paisalo validation results
+        paisalo_validation = PaisaloBusinessRules.perform_complete_validation(application)
+        
+        # Use Paisalo rules for approval decision
+        approved = paisalo_validation['is_valid']
+        
+        # Calculate recommended loan amount using Paisalo rules
+        recommended_amount = None
+        recommended_interest_rate = None
+        
+        if approved and paisalo_validation['emi_details']:
+            recommended_amount = float(application.loan_amount)  # Full amount if approved
+            recommended_interest_rate = paisalo_validation['emi_details']['annual_roi']
+        
+        # Generate Paisalo-specific reasoning
+        reasoning_parts = [
+            "=== PAISALO CREDIT ASSESSMENT ===",
+            f"Application processed using Paisalo business rules and policies.",
+            "",
+            PaisaloBusinessRules.generate_paisalo_assessment_summary(application, paisalo_validation)
+        ]
+        
+        if not approved:
+            reasoning_parts.extend([
+                "",
+                "Additional Analysis:",
+                f"Standard credit score: {application.credit_score}",
+                f"Debt-to-income ratio: {financial_metrics.get('debt_to_income_ratio', 0.0):.1%}",
+                f"Risk factors identified: {risk_factors.risk_factors_count}"
+            ])
+        
+        reasoning = "\n".join(reasoning_parts)
+        
+        # Generate Paisalo-specific recommendations
+        recommendations = []
+        if approved:
+            if paisalo_validation['emi_details']:
+                emi = paisalo_validation['emi_details']
+                recommendations.extend([
+                    f"Monthly EMI: ₹{emi['monthly_emi']:,.2f} using SLM method",
+                    f"Total interest: ₹{emi['total_interest']:,.2f}",
+                    "Set up automatic EMI payments to avoid defaults",
+                    "Maintain stable income throughout loan tenure"
+                ])
+        else:
+            # Add specific recommendations based on failed validations
+            for reason in paisalo_validation['rejection_reasons']:
+                if 'age' in reason.lower():
+                    recommendations.append("Applicant must be between 21-57 years old")
+                elif 'credit score' in reason.lower():
+                    recommendations.append("Improve credit score to 18-650 range")
+                elif 'loan amount' in reason.lower():
+                    recommendations.append("Apply for loan amount between ₹50,000-₹1,00,000")
+                elif 'document' in reason.lower():
+                    recommendations.append("Provide valid documents: (Voter ID + PAN) OR (DL + PAN)")
+                elif 'expense' in reason.lower():
+                    recommendations.append("Reduce monthly expenses to below 50% of income")
+        
+        if not recommendations:
+            recommendations.append("Contact Paisalo customer service for assistance")
+        
+        return CreditAssessmentResult(
+            application_id=application.application_id,
+            assessment_id=assessment_id,
+            approved=approved,
+            risk_level=paisalo_validation['risk_level'],
+            recommended_loan_amount=recommended_amount,
+            recommended_interest_rate=recommended_interest_rate,
+            confidence_scores=confidence_scores,
+            risk_factors=risk_factors,
+            transaction_summary=transaction_summary,
+            reasoning=reasoning,
+            recommendations=recommendations
         )
