@@ -1,90 +1,53 @@
+#!/usr/bin/env python3
 """
-FastAPI backend service for Credit Assessment Agent POC.
+Paisalo Credit Assessment API
 
-This is the main entry point for the credit assessment API service.
+FastAPI backend service for credit application assessment using Google ADK
+and Vertex AI with Paisalo-specific business rules.
 """
 
+import asyncio
 import logging
-import os
-from contextlib import asynccontextmanager
-from typing import Dict, Any
+import json
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional, List, Dict, Any
+from pathlib import Path
 
-import uvicorn
-from fastapi import FastAPI, HTTPException, Depends
-
-# Check for python-multipart availability
-try:
-    import multipart
-    from fastapi import UploadFile, File, Form
-    MULTIPART_AVAILABLE = True
-except ImportError:
-    UploadFile = None
-    File = None
-    Form = None
-    MULTIPART_AVAILABLE = False
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
-from credit_assessment_agent import CreditAssessmentAgent
+# Import our credit assessment components
+from credit_assessment_agent.agent import CreditAssessmentAgent
 from credit_assessment_agent.shared_libraries.data_models import (
     CreditApplication,
+    ApplicantInfo,
+    DocumentType,
+    EmploymentStatus,
+    LoanPurpose,
     CreditAssessmentResult,
-    AssessmentRequest
+    AssessmentRequest,
+    BankTransaction
 )
 from credit_assessment_agent.shared_libraries.vertex_ai_client import VertexAIClient
-from api.routes import router as api_router
-from api.dependencies import get_credit_agent, get_vertex_ai_client
-
-# Load environment variables
-load_dotenv()
+from credit_assessment_agent.shared_libraries.paisalo_rules import PaisaloBusinessRules
 
 # Configure logging
 logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
-    logger.info("Starting Credit Assessment Agent API")
-    
-    # Initialize services
-    try:
-        # Test Vertex AI connection
-        vertex_client = VertexAIClient()
-        logger.info("Vertex AI client initialized successfully")
-        
-        # Initialize main agent
-        credit_agent = CreditAssessmentAgent(vertex_ai_client=vertex_client)
-        logger.info("Credit Assessment Agent initialized successfully")
-        
-        # Store in app state
-        app.state.vertex_client = vertex_client
-        app.state.credit_agent = credit_agent
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize services: {str(e)}")
-        # Continue without AI services for basic functionality
-        app.state.vertex_client = None
-        app.state.credit_agent = None
-    
-    yield
-    
-    logger.info("Shutting down Credit Assessment Agent API")
-
-
-# Create FastAPI application
+# Initialize FastAPI app
 app = FastAPI(
-    title="Credit Assessment Agent API",
-    description="POC for intelligent credit application assessment using Google ADK with Vertex AI",
-    version="0.1.0",
+    title="Paisalo Credit Assessment API",
+    description="AI-powered credit assessment service with Paisalo business rules",
+    version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan
+    redoc_url="/redoc"
 )
 
 # Add CORS middleware
@@ -96,210 +59,369 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routes
-app.include_router(api_router, prefix="/api/v1")
+# Global variables for agents
+credit_agent: Optional[CreditAssessmentAgent] = None
+vertex_client: Optional[VertexAIClient] = None
 
 
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "Credit Assessment Agent API",
-        "version": "0.1.0",
-        "description": "POC for intelligent credit application assessment",
-        "docs": "/docs",
-        "health": "/health"
-    }
+# Response models
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: str
+    timestamp: datetime
+    version: str
+    paisalo_rules_loaded: bool
+    vertex_ai_available: bool
 
 
-@app.get("/health")
+class AssessmentResponse(BaseModel):
+    """Credit assessment response."""
+    success: bool
+    assessment_result: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    processing_time_seconds: float
+    paisalo_validation: Optional[Dict[str, Any]] = None
+
+
+class ValidationResponse(BaseModel):
+    """Paisalo rules validation response."""
+    is_valid: bool
+    risk_level: str
+    validations: Dict[str, Dict[str, Any]]
+    rejection_reasons: List[str]
+    warnings: List[str]
+    emi_details: Optional[Dict[str, Any]] = None
+
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the application components."""
+    global credit_agent, vertex_client
+    
+    logger.info("🚀 Starting Paisalo Credit Assessment API...")
+    
+    try:
+        # Initialize Vertex AI client (optional)
+        try:
+            vertex_client = VertexAIClient()
+            logger.info("✅ Vertex AI client initialized")
+        except Exception as e:
+            logger.warning(f"⚠️ Vertex AI client initialization failed: {e}")
+            vertex_client = None
+        
+        # Initialize credit assessment agent
+        credit_agent = CreditAssessmentAgent(vertex_ai_client=vertex_client)
+        logger.info("✅ Credit Assessment Agent initialized")
+        
+        # Test Paisalo rules
+        test_validation = PaisaloBusinessRules.validate_age(30)
+        if test_validation[0]:
+            logger.info("✅ Paisalo business rules loaded successfully")
+        else:
+            logger.error("❌ Paisalo business rules validation failed")
+        
+        logger.info("🎉 Paisalo Credit Assessment API started successfully!")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        raise
+
+
+# Health check endpoint
+@app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
-    try:
-        # Check if services are available
-        vertex_available = app.state.vertex_client is not None
-        agent_available = app.state.credit_agent is not None
-        
-        return {
-            "status": "healthy",
-            "services": {
-                "vertex_ai": "available" if vertex_available else "unavailable",
-                "credit_agent": "available" if agent_available else "unavailable"
-            },
-            "timestamp": "2024-09-16T11:30:00Z"
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=503, detail="Service unhealthy")
+    return HealthResponse(
+        status="healthy",
+        timestamp=datetime.utcnow(),
+        version="1.0.0",
+        paisalo_rules_loaded=True,
+        vertex_ai_available=vertex_client is not None
+    )
 
 
-@app.post("/api/v1/assess-credit", response_model=Dict[str, Any])
-async def assess_credit_application(
-    request: AssessmentRequest,
-    credit_agent: CreditAssessmentAgent = Depends(get_credit_agent)
-):
+# Main assessment endpoint
+@app.post("/assess", response_model=AssessmentResponse)
+async def assess_credit_application(request: AssessmentRequest):
     """
-    Assess a credit application.
+    Assess a credit application using Paisalo business rules and AI.
     
-    This endpoint processes a complete credit application and returns
-    an assessment with credibility score and confidence metrics.
+    This endpoint performs comprehensive credit assessment including:
+    - Paisalo business rules validation
+    - AI-powered risk assessment (if available)
+    - EMI calculation using SLM method
+    - Detailed recommendations
     """
+    start_time = datetime.utcnow()
+    
     try:
-        logger.info(f"Processing credit assessment for application {request.credit_application.application_id}")
+        if not credit_agent:
+            raise HTTPException(status_code=500, detail="Credit assessment agent not initialized")
         
-        # Perform credit assessment
+        logger.info(f"📋 Processing credit assessment for application {request.credit_application.application_id}")
+        
+        # Perform Paisalo validation first
+        paisalo_validation = PaisaloBusinessRules.perform_complete_validation(request.credit_application)
+        
+        # Perform full assessment
         assessment_result = await credit_agent.assess_credit_application(
             application=request.credit_application,
             bank_transactions=request.bank_statement_data,
             priority=request.priority
         )
         
-        return {
-            "success": True,
-            "assessment": assessment_result.dict(),
-            "message": "Credit assessment completed successfully"
+        # Convert result to dict for JSON response
+        result_dict = {
+            "application_id": assessment_result.application_id,
+            "assessment_id": assessment_result.assessment_id,
+            "approved": assessment_result.approved,
+            "risk_level": assessment_result.risk_level.value,
+            "recommended_loan_amount": float(assessment_result.recommended_loan_amount) if assessment_result.recommended_loan_amount else None,
+            "recommended_interest_rate": assessment_result.recommended_interest_rate,
+            "confidence_scores": {
+                "overall_confidence": assessment_result.confidence_scores.overall_confidence,
+                "credit_score_confidence": assessment_result.confidence_scores.credit_score_confidence,
+                "income_confidence": assessment_result.confidence_scores.income_confidence,
+                "transaction_confidence": assessment_result.confidence_scores.transaction_confidence,
+                "application_confidence": assessment_result.confidence_scores.application_confidence,
+                "data_quality_score": assessment_result.confidence_scores.data_quality_score
+            },
+            "risk_factors": {
+                "high_debt_to_income": assessment_result.risk_factors.high_debt_to_income,
+                "insufficient_income": assessment_result.risk_factors.insufficient_income,
+                "poor_credit_history": assessment_result.risk_factors.poor_credit_history,
+                "irregular_income": assessment_result.risk_factors.irregular_income,
+                "excessive_expenses": assessment_result.risk_factors.excessive_expenses,
+                "frequent_overdrafts": assessment_result.risk_factors.frequent_overdrafts,
+                "short_employment_history": assessment_result.risk_factors.short_employment_history,
+                "high_loan_to_value": assessment_result.risk_factors.high_loan_to_value,
+                "risk_factors_count": assessment_result.risk_factors.risk_factors_count,
+                "risk_level": assessment_result.risk_factors.risk_level.value
+            },
+            "reasoning": assessment_result.reasoning,
+            "recommendations": assessment_result.recommendations,
+            "assessed_at": assessment_result.assessed_at.isoformat(),
+            "processing_time_seconds": assessment_result.processing_time_seconds
         }
         
+        processing_time = (datetime.utcnow() - start_time).total_seconds()
+        
+        logger.info(f"✅ Assessment completed for {request.credit_application.application_id} in {processing_time:.2f}s")
+        
+        return AssessmentResponse(
+            success=True,
+            assessment_result=result_dict,
+            processing_time_seconds=processing_time,
+            paisalo_validation={
+                "is_valid": paisalo_validation["is_valid"],
+                "risk_level": paisalo_validation["risk_level"].value,
+                "validations": paisalo_validation["validations"],
+                "rejection_reasons": paisalo_validation["rejection_reasons"],
+                "warnings": paisalo_validation["warnings"],
+                "emi_details": paisalo_validation["emi_details"]
+            }
+        )
+        
     except Exception as e:
-        logger.error(f"Credit assessment failed: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Assessment failed: {str(e)}"
+        processing_time = (datetime.utcnow() - start_time).total_seconds()
+        logger.error(f"❌ Assessment failed: {str(e)}")
+        
+        return AssessmentResponse(
+            success=False,
+            error_message=str(e),
+            processing_time_seconds=processing_time
         )
 
 
-# Define upload function separately to avoid import-time evaluation
-async def upload_bank_statement_impl(
-    file, applicant_id: str, credit_agent: CreditAssessmentAgent
-):
+# Paisalo rules validation endpoint
+@app.post("/validate", response_model=ValidationResponse)
+async def validate_paisalo_rules(application: CreditApplication):
     """
-    Upload and process a bank statement PDF.
+    Validate application against Paisalo business rules only.
     
-    This endpoint accepts a PDF bank statement, extracts transaction data,
-    and returns analysis results.
+    This endpoint performs only the business rules validation without
+    full AI assessment, useful for quick pre-screening.
     """
     try:
-        # Validate file type
-        if not file.filename.lower().endswith('.pdf'):
+        logger.info(f"🔍 Validating Paisalo rules for application {application.application_id}")
+        
+        # Perform Paisalo validation
+        validation_results = PaisaloBusinessRules.perform_complete_validation(application)
+        
+        return ValidationResponse(
+            is_valid=validation_results["is_valid"],
+            risk_level=validation_results["risk_level"].value,
+            validations=validation_results["validations"],
+            rejection_reasons=validation_results["rejection_reasons"],
+            warnings=validation_results["warnings"],
+            emi_details=validation_results["emi_details"]
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Validation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# EMI calculation request model
+class EMIRequest(BaseModel):
+    """EMI calculation request."""
+    loan_amount: float = Field(..., description="Loan amount in INR")
+    term_months: int = Field(..., description="Loan term in months (12, 24, 36, or 48)")
+
+
+# EMI calculation endpoint
+@app.post("/calculate-emi")
+async def calculate_emi(request: EMIRequest):
+    """
+    Calculate EMI using Paisalo's SLM (Straight Line Method).
+    
+    Returns monthly EMI, total interest, and total amount to be paid.
+    """
+    try:
+        logger.info(f"💰 Calculating EMI for amount ₹{request.loan_amount:,.2f}, term {request.term_months} months")
+        
+        # Validate inputs
+        if request.term_months not in [12, 24, 36, 48]:
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid term. Allowed terms: 12, 24, 36, or 48 months"
+            )
+        
+        if not (50000 <= request.loan_amount <= 100000):
             raise HTTPException(
                 status_code=400,
-                detail="Only PDF files are supported"
+                detail="Loan amount must be between ₹50,000 and ₹1,00,000"
             )
         
-        # Check file size (10MB limit)
-        max_size = 10 * 1024 * 1024  # 10MB
-        file_content = await file.read()
-        if len(file_content) > max_size:
-            raise HTTPException(
-                status_code=400,
-                detail="File size exceeds 10MB limit"
-            )
+        # Calculate EMI
+        monthly_emi, annual_roi = PaisaloBusinessRules.calculate_emi_slm(
+            Decimal(str(request.loan_amount)), request.term_months
+        )
         
-        # Save temporary file
-        import tempfile
-        from pathlib import Path
+        total_amount = monthly_emi * request.term_months
+        total_interest = total_amount - Decimal(str(request.loan_amount))
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-            temp_file.write(file_content)
-            temp_path = Path(temp_file.name)
-        
-        try:
-            # Process bank statement
-            analysis_result = await credit_agent.analyze_bank_statement(
-                pdf_path=temp_path,
-                applicant_id=applicant_id
-            )
-            
-            return {
-                "success": True,
-                "analysis": analysis_result,
-                "message": "Bank statement processed successfully"
-            }
-            
-        finally:
-            # Clean up temporary file
-            temp_path.unlink(missing_ok=True)
+        return {
+            "loan_amount": request.loan_amount,
+            "term_months": request.term_months,
+            "monthly_emi": float(monthly_emi),
+            "annual_roi": annual_roi,
+            "total_interest": float(total_interest),
+            "total_amount": float(total_amount),
+            "calculation_method": "SLM (Straight Line Method)"
+        }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Bank statement processing failed: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Processing failed: {str(e)}"
-        )
+        logger.error(f"❌ EMI calculation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/assessment/{assessment_id}")
-async def get_assessment_result(
-    assessment_id: str,
-    credit_agent: CreditAssessmentAgent = Depends(get_credit_agent)
-):
+# Sample data endpoint
+@app.get("/sample-request")
+async def get_sample_request():
     """
-    Retrieve a specific assessment result by ID.
+    Get a sample credit application request for testing.
+    
+    Returns a properly formatted request that can be used with the /assess endpoint.
     """
     try:
-        # This would typically query a database
-        # For POC, return a placeholder response
-        return {
-            "success": True,
-            "assessment_id": assessment_id,
-            "message": "Assessment retrieval not implemented in POC",
-            "note": "In production, this would query stored assessment results"
-        }
-        
+        with open('sample_paisalo_request.json', 'r') as f:
+            sample_data = json.load(f)
+        return sample_data
     except Exception as e:
-        logger.error(f"Failed to retrieve assessment {assessment_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Retrieval failed: {str(e)}"
-        )
+        logger.error(f"❌ Failed to load sample request: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sample request not available")
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler."""
-    logger.error(f"Unhandled exception: {str(exc)}")
+# Business rules info endpoint
+@app.get("/business-rules")
+async def get_business_rules():
+    """
+    Get information about Paisalo business rules and validation criteria.
+    """
+    return {
+        "paisalo_business_rules": {
+            "age_range": {
+                "minimum": PaisaloBusinessRules.MIN_AGE,
+                "maximum": PaisaloBusinessRules.MAX_AGE,
+                "description": "Applicant age must be between 21-57 years"
+            },
+            "credit_score_range": {
+                "minimum": PaisaloBusinessRules.MIN_CREDIT_SCORE,
+                "maximum": PaisaloBusinessRules.MAX_CREDIT_SCORE,
+                "description": "Credit score must be between 18-650"
+            },
+            "loan_amount_range": {
+                "minimum": float(PaisaloBusinessRules.MIN_LOAN_AMOUNT),
+                "maximum": float(PaisaloBusinessRules.MAX_LOAN_AMOUNT),
+                "description": "Loan amount must be between ₹50,000-₹1,00,000"
+            },
+            "document_requirements": {
+                "valid_combinations": [
+                    "Voter ID + PAN",
+                    "Driving License + PAN"
+                ],
+                "description": "Must provide one of the valid document combinations"
+            },
+            "income_expense_ratio": {
+                "maximum_ratio": PaisaloBusinessRules.MAX_EXPENSE_RATIO,
+                "description": "Total expenses must not exceed 50% of total income"
+            },
+            "roi_rates": {
+                "12_months": f"{PaisaloBusinessRules.ROI_RATES[12]:.1%}",
+                "24_months": f"{PaisaloBusinessRules.ROI_RATES[24]:.1%}",
+                "36_months": f"{PaisaloBusinessRules.ROI_RATES[36]:.1%}",
+                "48_months": f"{PaisaloBusinessRules.ROI_RATES[48]:.1%}",
+                "description": "Interest rates by loan tenure using SLM method"
+            },
+            "pan_format": {
+                "pattern": PaisaloBusinessRules.PAN_REGEX,
+                "example": "ABCDE1234F",
+                "description": "PAN must be in format: 5 letters + 4 digits + 1 letter"
+            }
+        }
+    }
+
+
+# Error handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions."""
     return JSONResponse(
-        status_code=500,
+        status_code=exc.status_code,
         content={
-            "success": False,
-            "message": "Internal server error",
-            "detail": "An unexpected error occurred"
+            "error": True,
+            "message": exc.detail,
+            "status_code": exc.status_code
         }
     )
 
 
-# Conditionally add file upload endpoint if multipart is available
-if MULTIPART_AVAILABLE:
-    @app.post("/api/v1/upload-bank-statement")
-    async def upload_bank_statement(
-        file: UploadFile = File(...),
-        applicant_id: str = Form(...),
-        credit_agent: CreditAssessmentAgent = Depends(get_credit_agent)
-    ):
-        return await upload_bank_statement_impl(file, applicant_id, credit_agent)
-else:
-    @app.post("/api/v1/upload-bank-statement")
-    async def upload_bank_statement_unavailable():
-        raise HTTPException(
-            status_code=501,
-            detail="File upload functionality requires python-multipart. Install with: pip install python-multipart"
-        )
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    """Handle general exceptions."""
+    logger.error(f"Unhandled exception: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": True,
+            "message": "Internal server error",
+            "status_code": 500
+        }
+    )
 
 
 if __name__ == "__main__":
-    # Configuration from environment
-    host = os.getenv("API_HOST", "0.0.0.0")
-    port = int(os.getenv("API_PORT", "8000"))
-    reload = os.getenv("API_RELOAD", "true").lower() == "true"
+    import uvicorn
     
-    logger.info(f"Starting server on {host}:{port}")
-    
+    logger.info("🚀 Starting Paisalo Credit Assessment API server...")
     uvicorn.run(
         "main:app",
-        host=host,
-        port=port,
-        reload=reload,
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
     )
